@@ -307,6 +307,7 @@
 				68F5D6941CADB13C00F7D836 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};

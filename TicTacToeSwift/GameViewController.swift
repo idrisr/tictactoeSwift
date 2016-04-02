@@ -16,10 +16,6 @@ enum ViewCorner: Int {
 }
 
 class GameViewController: UIViewController, UIGestureRecognizerDelegate {
-    let playerTurnContext = UnsafeMutablePointer<()>()
-    let boardStateContext = UnsafeMutablePointer<()>()
-    let currentGameStateContext = UnsafeMutablePointer<()>()
-
     @IBOutlet weak var turnLabel: UILabel!
     @IBOutlet var buttons: [UIButton]!
 
@@ -27,14 +23,30 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
     var snapBehavior: UISnapBehavior!
     var turnLabelStartPoint: CGPoint!
 
+    var viewPositions: Dictionary<Int, CGPoint>!
+
     var gameEngine: TicTacToeBoard!
 
     @IBOutlet weak var playAgainButton: UIButton!
     @IBOutlet weak var helpButton: UIButton!
 
-    private static var myContext = 0
-
     // #MARK: - view life cycle
+    override func viewDidAppear(animated: Bool) {
+        super.viewDidAppear(animated)
+
+        if (gameEngine.currentGameState == GameState.Empty) {
+            self.updateTurnLabel()
+            self.layoutBoard()
+        }
+
+        animator = UIDynamicAnimator.init(referenceView: view)
+        snapBehavior.snapPoint = turnLabel.center
+        snapBehavior.damping = 0.5
+        animator.addBehavior(snapBehavior)
+
+        viewPositions = getViewPositions()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         navigationController?.setNavigationBarHidden(true, animated: true)
@@ -50,16 +62,17 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         playAgainButton.titleLabel?.textColor = UIColor.blueColor()
         playAgainButton.titleLabel?.font = UIFont.systemFontOfSize(30)
 
-        let panGesture = UIPanGestureRecognizer.init(target: self, action: Selector("panAction:"))
+        // set up pan gesture
+        let panGesture = UIPanGestureRecognizer.init(target: self, action: #selector(moveObject))
 
         turnLabel.addGestureRecognizer(panGesture)
         panGesture.delegate = self
 
         turnLabel.userInteractionEnabled = true
         gameEngine = TicTacToeBoard.init()
-        gameEngine.addObserver(self, forKeyPath: "playerTurn", options:[], context: playerTurnContext)
-        gameEngine.addObserver(self, forKeyPath: "boardState", options:[.New, .Old], context: boardStateContext)
-        gameEngine.addObserver(self, forKeyPath: "currentGameState", options:[.New], context: currentGameStateContext)
+        gameEngine.addObserver(self, forKeyPath: "playerTurn", options:[], context: nil)
+        gameEngine.addObserver(self, forKeyPath: "boardState", options:[.New, .Old], context: nil)
+        gameEngine.addObserver(self, forKeyPath: "currentGameState", options:[.New], context: nil)
     }
 
     override func viewWillAppear(animated: Bool) {
@@ -78,15 +91,14 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
                                                   change: [String : AnyObject]?,
                                                   context: UnsafeMutablePointer<Void>) {
 
-        if context == playerTurnContext {
+        if keyPath == "playerTurn" {
             updateTurnLabel()
-        } else if context == boardStateContext {
+        } else if keyPath == "boardState" {
             if (gameEngine.currentGameState != GameState.Won &&
                 gameEngine.currentGameState != GameState.Tied) {
                 updateBoardForChanges(change)
             }
-
-        } else if context == currentGameStateContext {
+        } else if keyPath == "currentGameState" {
             checkGameStatus()
         }
     }
@@ -125,22 +137,24 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         layoutBoard()
         animator.removeAllBehaviors()
         animator.addBehavior(snapBehavior)
-        let origViewPositions = viewPositions()
-        let keys = origViewPositions.keys
+        let keys = viewPositions.keys
 
+        print("after")
         for key in keys{
             // get tag
             let tag:Int = key
             // get CGPoint
-            let point = origViewPositions[key]!;
+            let point = viewPositions[key]!;
             // get view
             let view = self.view.viewWithTag(tag)!
+            print(point)
             let snap = UISnapBehavior.init(item: view, snapToPoint: point)
             snap.damping = 0.9
             animator.addBehavior(snap)
             animator.updateItemUsingCurrentState(view)
         }
         gameEngine.restartGame()
+        // stop
     }
 
     // #MARK: - private methods
@@ -195,7 +209,7 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         return CGPointMake(x, y)
     }
 
-    func viewPositions() -> Dictionary<Int, CGPoint> {
+    func getViewPositions() -> Dictionary<Int, CGPoint> {
         var _viewPositions =  [Int: CGPoint]()
 
         for view in self.view.subviews {
@@ -204,24 +218,59 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
                 continue
             }
             _viewPositions[tag] = view.center
+            print(view.center)
         }
         return _viewPositions
     }
 
-    func showAlertGameOver {
-        var title
-        if gameEngine.currentGameState == GameState.won {
-            title = // here we are
-
-        } else if gameEngine.currentGameState == GameState.tied {
-
+    func showAlertGameOver() {
+        var title: String = ""
+        if gameEngine.currentGameState == GameState.Won {
+            title = "Player \(gameEngine.playerTurn) Won!"
+        } else if gameEngine.currentGameState == GameState.Tied {
+            title = "Game Tied"
         }
 
+        let alert = UIAlertController.init(title: title,
+                                           message: "",
+                                           preferredStyle: UIAlertControllerStyle.ActionSheet)
+
+        let action = UIAlertAction.init(title: "Play Again",
+                                        style: UIAlertActionStyle.Default) { (UIAlertAction) in
+            self.animator.removeAllBehaviors()
+            // way without NSArray?
+            let dynamicItems:NSArray = [self.helpButton, self.turnLabel, self.playAgainButton].arrayByAddingObjectsFromArray(self.buttons)
+            self.playAgainButton.hidden = false
+
+            let dynamics = UIDynamicItemBehavior.init(items: dynamicItems as! Array)
+            dynamics.elasticity = 1.0
+            dynamics.allowsRotation = true
+
+            let gravity = UIGravityBehavior.init(items: dynamicItems as! Array)
+            let collision = UICollisionBehavior.init(items: dynamicItems as! Array)
+
+            let topLeft = self.pointForCorner(ViewCorner.ViewCornerTopLeft, view: self.view)
+            let topRight = self.pointForCorner(ViewCorner.ViewCornerTopRight, view: self.view)
+            let bottomLeft = self.pointForCorner(ViewCorner.ViewCornerBottomLeft, view: self.view)
+            let bottomRight = self.pointForCorner(ViewCorner.ViewCornerBottomRight, view: self.view)
+
+            collision.addBoundaryWithIdentifier("left", fromPoint: topLeft, toPoint: bottomLeft)
+            collision.addBoundaryWithIdentifier("bottom", fromPoint: bottomLeft, toPoint: bottomRight)
+            collision.addBoundaryWithIdentifier("right", fromPoint: topRight, toPoint: bottomRight)
+            collision.addBoundaryWithIdentifier("top", fromPoint: topLeft, toPoint: topRight)
+
+            self.animator.addBehavior(gravity)
+            self.animator.addBehavior(collision)
+            self.animator.addBehavior(dynamics)
+            self.animator.addBehavior(self.snapBehavior)
+
+            for dynamicItem in dynamicItems {
+                self.animator.updateItemUsingCurrentState(dynamicItem as! UIDynamicItem)
+            }
+        }
+        alert.addAction(action)
+        presentViewController(alert, animated: true) { }
     }
-
-
-    func updateBoardForChanges(change: [String: AnyObject]?) { }
-    func showAlertGameOver() {}
 
     func layoutBoard() {
         turnLabel.text = gameEngine.playerTurn!
@@ -234,4 +283,50 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
+    func updateBoardForChanges(change: [String: AnyObject]?) {
+        let new = change!["new"] as! String
+        let old = change!["old"] as! String
+
+        var diffs: Array<Int> = []
+        var counter = 0
+        for character in old.characters {
+            let isSame = (character == new[new.startIndex.advancedBy(counter)])
+            if !isSame {
+                diffs.append(counter)
+            }
+            counter = counter + 1
+        }
+
+        for diff in diffs {
+            let tag = (diff + 1) * 10
+            let button:UIButton = view.viewWithTag(tag) as! UIButton
+            let range = NSMakeRange(diff, 1)
+            button.setTitle(gameEngine.boardState.substringWithRange(range), forState: UIControlState.Normal)
+            let buttonColor = gameEngine.playerTurn=="O" ? UIColor.greenColor(): UIColor.purpleColor()
+            button.setTitleColor(buttonColor, forState: UIControlState.Normal)
+            button.layer.borderColor = buttonColor.CGColor
+        }
+    }
+
+    func moveObject(panGesture: UIPanGestureRecognizer) {
+        if (panGesture.state == UIGestureRecognizerState.Ended){
+            let tagIntersect = buttonThatIntersectsWithView(turnLabel)
+            let doesIntersect = tagIntersect != -1
+            var button:UIButton = UIButton()
+
+            if (doesIntersect) {
+                button = view.viewWithTag(tagIntersect) as! UIButton
+                let rowCol = getBoardIndexesFromButton(button)
+                let row = rowCol.first! as UInt
+                let col = rowCol.last! as UInt
+                let canMoveToSquare = gameEngine.canUpdateBoardAtRow(row, atColumn: col)
+                if (canMoveToSquare && doesIntersect) {
+                    gameEngine.updateBoardForCurrentPlayerAtRow(row, atColumn: col)
+                }
+            }
+            animator.updateItemUsingCurrentState(turnLabel)
+        } else {
+            turnLabel.center = panGesture.locationInView(turnLabel!.superview)
+        }
+    }
 }
